@@ -9,7 +9,7 @@ class InputEmbedding(nn.Module):
     def __init__(self, vocab_size: int, d_model: int):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.embedding(x)
 
@@ -128,7 +128,7 @@ class GroupedQueryAttention(nn.Module):
         v = self.w_v(x).view(B, T, self.n_kv_heads, self.head_dim).transpose(1, 2)
         
         # RoPE applied to Q and K only
-        sin, cos = self.rotary_emb(q, start_pos)
+        sin, cos = self.rotary_emb(k, start_pos)
         q = apply_rotary_pos_emb(q, sin, cos)
         k = apply_rotary_pos_emb(k, sin, cos)
         
@@ -140,7 +140,7 @@ class GroupedQueryAttention(nn.Module):
         
         new_kv = (k, v) if use_cache else None
         
-        # Expand KV to match Q head count for GQA
+        # Repeat K/V heads across query head groups (GQA)
         k_expanded = repeat_kv(k, self.n_rep)
         v_expanded = repeat_kv(v, self.n_rep)
         
@@ -149,7 +149,7 @@ class GroupedQueryAttention(nn.Module):
             q, k_expanded, v_expanded,
             attn_mask=None,
             dropout_p=dropout_p,
-            is_causal=(past_kv is None)
+            is_causal= True
         )
         
         attn_out = attn_out.transpose(1, 2).contiguous().view(B, T, -1)
