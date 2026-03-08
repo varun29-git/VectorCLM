@@ -1,6 +1,6 @@
 # VectorSLM
 
-VectorSLM is a from-scratch implementation of a decoder-only Transformer architecture, designed as a technical exercise in modern language model design. The project encompasses the entire lifecycle of a Small Language Model (SLM), including custom BPE tokenization, a multi-stage pre-training curriculum, and instruction fine-tuning infrastructure.
+VectorSLM is a from-scratch implementation of a decoder-only Transformer architecture, designed as a technical exercise in modern language model design. The project encompasses the entire lifecycle of a Small Language Model (SLM), including custom BPE tokenization, a multi-stage pre-training curriculum (at 600 million parameters), and instruction fine-tuning infrastructure.
 
 ## Model Architecture
 `model.py`
@@ -79,7 +79,7 @@ For the fine-tuning stage,  ***SmolTalk*** and ***SlimOrca*** are utilized to tr
 
 ### Infrastructure
 
-- Pre-training (train.py): Designed for a 3-billion token curriculum using an interleaved streaming approach to handle large-scale datasets with minimal memory overhead. Pretraining utilizes 8-bit AdamW (via bitsandbytes) and a Cosine Annealing learning rate schedule.
+- Pre-training (train.py): Designed for a 50 billion token curriculum using an interleaved streaming approach to handle large-scale datasets with minimal memory overhead. Pretraining utilizes 8-bit AdamW (via bitsandbytes) and a Cosine Annealing learning rate schedule.
 
 - Fine-tuning (finetune.py): Transitions the base model to an instruction-following assistant using a masked loss strategy (ignore_index=-100) so the model only learns to predict assistant responses.
 
