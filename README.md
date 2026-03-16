@@ -92,3 +92,12 @@ Contains the StreamingLanguageModelDataset, which utilizes PyTorch's IterableDat
 
 ## Design Philosophy
 VectorCLM is a small-scale transformer implementation aimed at improving understanding of modern architectural design choices. The project prioritizes clear, readable implementations of core components such as RoPE, GQA, and Pre-Normalization—over benchmark performance, with the goal of making these ideas easier to study and modify.
+
+## Relevant Papers
+- **Transformer Architecture**: [Attention Is All You Need](https://arxiv.org/abs/1706.03762) (Vaswani et al., 2017)
+- **LLaMA Base Architecture**: [LLaMA: Open and Efficient Foundation Language Models](https://arxiv.org/abs/2302.13971) (Touvron et al., 2023)
+- **RMSNorm**: [Root Mean Square Layer Normalization](https://arxiv.org/abs/1910.07467) (Zhang & Sennrich, 2019)
+- **RoPE**: [RoFormer: Enhanced Transformer with Rotary Position Embedding](https://arxiv.org/abs/2104.09864) (Su et al., 2021)
+- **Grouped-Query Attention (GQA)**: [GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints](https://arxiv.org/abs/2305.13245) (Ainslie et al., 2023)
+- **FlashAttention**: [FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning](https://arxiv.org/abs/2307.08691) (Dao, 2023)
+- **SwiGLU Activation**: [GLU Variants Improve Transformer](https://arxiv.org/abs/2002.05202) (Shazeer, 2020)
