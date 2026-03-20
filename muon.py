@@ -1,5 +1,6 @@
 import torch
 import torch.distributed as dist
+import bitsandbytes.functional as bnbF
 
 
 def zeropower_via_newtonschulz5(G, steps: int):
@@ -38,6 +39,8 @@ def muon_update(grad, momentum, beta=0.95, ns_steps=5, nesterov=True):
         update = update.view(len(update), -1)
     update = zeropower_via_newtonschulz5(update, steps=ns_steps)
     update *= max(1, update.size(-2) / update.size(-1))**0.5
+    # Scale Muon updates by 0.2 to match the RMS of AdamW updates
+    update *= 0.2
     return update
 
 
@@ -99,9 +102,10 @@ class Muon(torch.optim.Optimizer):
 class SingleDeviceMuon(torch.optim.Optimizer):
     """
     Muon variant for usage in non-distributed settings.
+    Uses 8-bit quantized momentum buffers via bitsandbytes to reduce memory.
     """
-    def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95):
-        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
+    def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95, nesterov=True):
+        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov=nesterov)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -115,12 +119,28 @@ class SingleDeviceMuon(torch.optim.Optimizer):
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
-                    # continue
-                    p.grad = torch.zeros_like(p)  # Force synchronization
+                    p.grad = torch.zeros_like(p)
                 state = self.state[p]
                 if len(state) == 0:
-                    state["momentum_buffer"] = torch.zeros_like(p)
-                update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
+                    # Store momentum buffer in 8-bit
+                    state["momentum_buffer_quantized"], state["momentum_buffer_qstate"] = bnbF.quantize_blockwise(
+                        torch.zeros_like(p)
+                    )
+
+                # Dequantize momentum buffer for computation
+                momentum_buf = bnbF.dequantize_blockwise(
+                    state["momentum_buffer_quantized"],
+                    state["momentum_buffer_qstate"]
+                )
+
+                # Run muon update (modifies momentum_buf in-place via lerp_)
+                update = muon_update(p.grad, momentum_buf, beta=group["momentum"], nesterov=group["nesterov"])
+
+                # Re-quantize the updated momentum buffer back to 8-bit
+                state["momentum_buffer_quantized"], state["momentum_buffer_qstate"] = bnbF.quantize_blockwise(
+                    momentum_buf
+                )
+
                 p.mul_(1 - group["lr"] * group["weight_decay"])
                 p.add_(update.reshape(p.shape), alpha=-group["lr"])
 
