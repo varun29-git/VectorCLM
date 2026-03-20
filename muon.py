@@ -191,7 +191,8 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
                 group["lr"] = group.get("lr", 0.02)
                 group["momentum"] = group.get("momentum", 0.95)
                 group["weight_decay"] = group.get("weight_decay", 0)
-                assert set(group.keys()) == set(["params", "lr", "momentum", "weight_decay", "use_muon"])
+                group["nesterov"] = group.get("nesterov", True)
+                assert set(group.keys()) == set(["params", "lr", "momentum", "weight_decay", "use_muon", "nesterov"])
             else:
                 # defaults
                 group["lr"] = group.get("lr", 3e-4)
@@ -221,8 +222,19 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
                             p.grad = torch.zeros_like(p)  # Force synchronization
                         state = self.state[p]
                         if len(state) == 0:
-                            state["momentum_buffer"] = torch.zeros_like(p)
-                        update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
+                            state["momentum_buffer_quantized"], state["momentum_buffer_qstate"] = bnbF.quantize_blockwise(
+                                torch.zeros_like(p)
+                            )
+                        # Dequantize momentum buffer for computation
+                        momentum_buf = bnbF.dequantize_blockwise(
+                            state["momentum_buffer_quantized"],
+                            state["momentum_buffer_qstate"]
+                        )
+                        update = muon_update(p.grad, momentum_buf, beta=group["momentum"], nesterov=group["nesterov"])
+                        # Re-quantize the updated momentum buffer back to 8-bit
+                        state["momentum_buffer_quantized"], state["momentum_buffer_qstate"] = bnbF.quantize_blockwise(
+                            momentum_buf
+                        )
                         p.mul_(1 - group["lr"] * group["weight_decay"])
                         p.add_(update.reshape(p.shape), alpha=-group["lr"])
                     dist.all_gather(params_pad[base_i:base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()])
@@ -233,12 +245,18 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
                         p.grad = torch.zeros_like(p)  # Force synchronization
                     state = self.state[p]
                     if len(state) == 0:
-                        state["exp_avg"] = torch.zeros_like(p)
-                        state["exp_avg_sq"] = torch.zeros_like(p)
+                        state["exp_avg_quantized"], state["exp_avg_qstate"] = bnbF.quantize_blockwise(torch.zeros_like(p))
+                        state["exp_avg_sq_quantized"], state["exp_avg_sq_qstate"] = bnbF.quantize_blockwise(torch.zeros_like(p))
                         state["step"] = 0
                     state["step"] += 1
-                    update = adam_update(p.grad, state["exp_avg"], state["exp_avg_sq"],
+                    # Dequantize for computation
+                    exp_avg = bnbF.dequantize_blockwise(state["exp_avg_quantized"], state["exp_avg_qstate"])
+                    exp_avg_sq = bnbF.dequantize_blockwise(state["exp_avg_sq_quantized"], state["exp_avg_sq_qstate"])
+                    update = adam_update(p.grad, exp_avg, exp_avg_sq,
                                          state["step"], group["betas"], group["eps"])
+                    # Re-quantize
+                    state["exp_avg_quantized"], state["exp_avg_qstate"] = bnbF.quantize_blockwise(exp_avg)
+                    state["exp_avg_sq_quantized"], state["exp_avg_sq_qstate"] = bnbF.quantize_blockwise(exp_avg_sq)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update, alpha=-group["lr"])
 
@@ -257,7 +275,8 @@ class SingleDeviceMuonWithAuxAdam(torch.optim.Optimizer):
                 group["lr"] = group.get("lr", 0.02)
                 group["momentum"] = group.get("momentum", 0.95)
                 group["weight_decay"] = group.get("weight_decay", 0)
-                assert set(group.keys()) == set(["params", "lr", "momentum", "weight_decay", "use_muon"])
+                group["nesterov"] = group.get("nesterov", True)
+                assert set(group.keys()) == set(["params", "lr", "momentum", "weight_decay", "use_muon", "nesterov"])
             else:
                 # defaults
                 group["lr"] = group.get("lr", 3e-4)
@@ -283,8 +302,19 @@ class SingleDeviceMuonWithAuxAdam(torch.optim.Optimizer):
                         p.grad = torch.zeros_like(p)  # Force synchronization
                     state = self.state[p]
                     if len(state) == 0:
-                        state["momentum_buffer"] = torch.zeros_like(p)
-                    update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
+                        state["momentum_buffer_quantized"], state["momentum_buffer_qstate"] = bnbF.quantize_blockwise(
+                            torch.zeros_like(p)
+                        )
+                    # Dequantize momentum buffer for computation
+                    momentum_buf = bnbF.dequantize_blockwise(
+                        state["momentum_buffer_quantized"],
+                        state["momentum_buffer_qstate"]
+                    )
+                    update = muon_update(p.grad, momentum_buf, beta=group["momentum"], nesterov=group["nesterov"])
+                    # Re-quantize translation of updated momentum buffer back to 8-bit
+                    state["momentum_buffer_quantized"], state["momentum_buffer_qstate"] = bnbF.quantize_blockwise(
+                        momentum_buf
+                    )
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update.reshape(p.shape), alpha=-group["lr"])
             else:
@@ -294,12 +324,18 @@ class SingleDeviceMuonWithAuxAdam(torch.optim.Optimizer):
                         p.grad = torch.zeros_like(p)  # Force synchronization
                     state = self.state[p]
                     if len(state) == 0:
-                        state["exp_avg"] = torch.zeros_like(p)
-                        state["exp_avg_sq"] = torch.zeros_like(p)
+                        state["exp_avg_quantized"], state["exp_avg_qstate"] = bnbF.quantize_blockwise(torch.zeros_like(p))
+                        state["exp_avg_sq_quantized"], state["exp_avg_sq_qstate"] = bnbF.quantize_blockwise(torch.zeros_like(p))
                         state["step"] = 0
                     state["step"] += 1
-                    update = adam_update(p.grad, state["exp_avg"], state["exp_avg_sq"],
+                    # Dequantize for computation
+                    exp_avg = bnbF.dequantize_blockwise(state["exp_avg_quantized"], state["exp_avg_qstate"])
+                    exp_avg_sq = bnbF.dequantize_blockwise(state["exp_avg_sq_quantized"], state["exp_avg_sq_qstate"])
+                    update = adam_update(p.grad, exp_avg, exp_avg_sq,
                                          state["step"], group["betas"], group["eps"])
+                    # Re-quantize
+                    state["exp_avg_quantized"], state["exp_avg_qstate"] = bnbF.quantize_blockwise(exp_avg)
+                    state["exp_avg_sq_quantized"], state["exp_avg_sq_qstate"] = bnbF.quantize_blockwise(exp_avg_sq)
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update, alpha=-group["lr"])
 
