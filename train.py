@@ -133,8 +133,6 @@ def train_mixed_strategy(model, optimizer_muon, optimizer_adamw, vocab_size, glo
     
     # 6. TinyCodes (nampdn-ai/tiny-codes)
     ds_codes = load_dataset("nampdn-ai/tiny-codes", split="train", streaming=True)
-    # Map 'response' or 'prompt' to 'text' if needed. 
-    # Usually tiny-codes has 'prompt' and 'response'.
     ds_codes = ds_codes.filter(lambda x: x["programming_language"] == "Python")
     ds_codes = ds_codes.map(lambda x: {"text": f"Question:\n{x['prompt']}\n\nCode:\n{x['response']}"}).select_columns(["text"])
 
@@ -151,6 +149,11 @@ def train_mixed_strategy(model, optimizer_muon, optimizer_adamw, vocab_size, glo
 
     pbar = tqdm(total=TOTAL_TRAINING_TOKENS // (BATCH_SIZE * SEQ_LEN), dynamic_ncols=True)
     loss_window = deque(maxlen=50)
+
+    # Watchdog Variables
+    best_loss = float('inf')
+    last_improvement_time = time.time()
+    lr_multiplier = 1.0
 
     optimizer_muon.zero_grad(set_to_none=True)
     optimizer_adamw.zero_grad(set_to_none=True)
@@ -183,10 +186,29 @@ def train_mixed_strategy(model, optimizer_muon, optimizer_adamw, vocab_size, glo
 
         if step % GRAD_ACCUM_STEPS == 0:
             opt_step += 1
-            # Update AdamW LR
-            current_adamw_lr = get_adamw_lr(opt_step, total_steps)
+            
+            # --- Emergency Defibrillator Watchdog ---
+            avg_loss = sum(loss_window) / len(loss_window) if loss_window else loss.item()
+            if avg_loss > 3.0:
+                if avg_loss < best_loss - 0.2:
+                    best_loss = avg_loss
+                    last_improvement_time = time.time()
+                
+                # Check for 2-hour stagnation (7200 seconds)
+                if time.time() - last_improvement_time > 7200:
+                    print("\nSTALL DETECTED: Applying 1.5x Thermal Kick")
+                    lr_multiplier *= 1.5
+                    best_loss = avg_loss # Reset baseline
+                    last_improvement_time = time.time() # Reset timer
+            
+            # Update AdamW LR with multiplier
+            current_adamw_lr = get_adamw_lr(opt_step, total_steps) * lr_multiplier
             for param_group in optimizer_adamw.param_groups:
                 param_group['lr'] = current_adamw_lr
+
+            # Update Muon LR with multiplier
+            for param_group in optimizer_muon.param_groups:
+                param_group['lr'] = 0.02 * lr_multiplier
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer_muon.step()
@@ -200,12 +222,13 @@ def train_mixed_strategy(model, optimizer_muon, optimizer_adamw, vocab_size, glo
         pbar.update(1)
 
         loss_window.append(loss.item())
-        avg_loss = sum(loss_window) / len(loss_window)
+        current_avg_loss = sum(loss_window) / len(loss_window)
 
         pbar.set_postfix({
             "Phase": phase_name,
             "Adam_LR": f"{current_adamw_lr:.1e}" if opt_step > 0 else "0.0e+00",
-            "L": f"{avg_loss:.2f}",
+            "L": f"{current_avg_loss:.2f}",
+            "Watchdog": f"{lr_multiplier:.1f}x" if current_avg_loss > 3.0 else "OFF"
         })
 
     pbar.close()
